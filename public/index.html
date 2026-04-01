@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Downloader</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0e0e11;
+      --surface: #18181c;
+      --surface2: #1f1f25;
+      --border: #2a2a33;
+      --accent: #7c6af7;
+      --accent-hover: #9b8dff;
+      --accent-dim: rgba(124, 106, 247, 0.15);
+      --text: #e8e8f0;
+      --muted: #6b6b7e;
+      --success: #34d399;
+      --error: #f87171;
+      --warning: #fbbf24;
+      --pending: #60a5fa;
+      --radius: 10px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 16px 80px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 36px;
+    }
+
+    header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), #a78bfa, #60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.5px;
+    }
+
+    header p {
+      color: var(--muted);
+      margin-top: 6px;
+      font-size: 0.9rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      width: 100%;
+      max-width: 720px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 140px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.9rem;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      padding: 12px;
+      resize: vertical;
+      outline: none;
+      transition: border-color 0.2s;
+      line-height: 1.6;
+    }
+
+    textarea::placeholder { color: var(--muted); }
+    textarea:focus { border-color: var(--accent); }
+
+    .btn-download {
+      width: 100%;
+      padding: 13px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.95rem;
+      font-weight: 700;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+      letter-spacing: 0.02em;
+    }
+
+    .btn-download:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-download:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Job list */
+    #job-list {
+      width: 100%;
+      max-width: 720px;
+      margin-top: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .job-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      animation: fadeIn 0.25s ease;
+    }
+
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+    .job-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .job-status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 4px;
+    }
+
+    .job-status-dot.pending  { background: var(--pending); }
+    .job-status-dot.downloading { background: var(--warning); animation: pulse 1s ease infinite; }
+    .job-status-dot.done    { background: var(--success); }
+    .job-status-dot.error   { background: var(--error); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
+    .job-url {
+      font-size: 0.8rem;
+      color: var(--muted);
+      word-break: break-all;
+      flex: 1;
+    }
+
+    .job-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 20px;
+      flex-shrink: 0;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-pending     { background: rgba(96,165,250,0.15); color: var(--pending); }
+    .badge-downloading { background: rgba(251,191,36,0.15); color: var(--warning); }
+    .badge-done        { background: rgba(52,211,153,0.15); color: var(--success); }
+    .badge-error       { background: rgba(248,113,113,0.15); color: var(--error); }
+
+    .job-progress {
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      white-space: pre-wrap;
+      word-break: break-all;
+      padding: 6px 10px;
+      background: var(--surface2);
+      border-radius: 6px;
+      display: none;
+    }
+
+    .job-progress.visible { display: block; }
+
+    .job-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-action {
+      padding: 7px 14px;
+      border-radius: 7px;
+      border: none;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .btn-action:hover { opacity: 0.85; }
+
+    .btn-dl  { background: var(--success); color: #0e0e11; }
+    .btn-del { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+
+    /* Error banner */
+    #error-banner {
+      display: none;
+      background: rgba(248,113,113,0.1);
+      border: 1px solid var(--error);
+      color: var(--error);
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      margin-top: 16px;
+      width: 100%;
+      max-width: 720px;
+      white-space: pre-line;
+    }
+
+    /* Divider */
+    .section-title {
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 8px 0 4px;
+      width: 100%;
+      max-width: 720px;
+      display: none;
+    }
+
+    .section-title.visible { display: block; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Video Downloader</h1>
+  <p>TikTok &amp; Meta Ads Library · Sin marca de agua</p>
+</header>
+
+<div class="card">
+
+  <label for="urls">URLs (una por línea)</label>
+  <textarea
+    id="urls"
+    placeholder="https://www.tiktok.com/@usuario/video/123456789&#10;https://www.facebook.com/ads/library/?id=987654321"
+  ></textarea>
+
+  <p style="margin-top:18px; margin-bottom:16px; color:var(--muted); font-size:0.88rem;">Descarga videos de TikTok y Meta Ads Library</p>
+
+  <button class="btn-download" id="btn-download" onclick="startDownloads()">
+    Descargar Todo
+  </button>
+
+</div>
+
+<div id="error-banner"></div>
+
+<p class="section-title" id="section-title">Progreso de descargas</p>
+<div id="job-list"></div>
+
+<script>
+  const jobPollers = new Map();
+
+  function detectSource(url) {
+    if (url.includes('tiktok.com')) return 'tiktok';
+    return 'meta';
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('error-banner');
+    el.textContent = msg;
+    el.style.display = 'block';
+    setTimeout(() => { el.style.display = 'none'; }, 8000);
+  }
+
+  async function startDownloads() {
+    const raw = document.getElementById('urls').value.trim();
+    if (!raw) return showError('Pega al menos una URL.');
+
+    const urls = raw.split('\n').map(l => l.trim()).filter(l => l.startsWith('http'));
+    if (!urls.length) return showError('No se encontraron URLs válidas.');
+
+    document.getElementById('btn-download').disabled = true;
+    document.getElementById('section-title').classList.add('visible');
+
+    for (const url of urls) {
+      await enqueueJob(url, detectSource(url));
+    }
+
+    document.getElementById('btn-download').disabled = false;
+  }
+
+  async function enqueueJob(url, source) {
+    let res, data;
+    try {
+      res = await fetch('/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, source }),
+      });
+      data = await res.json();
+    } catch (e) {
+      showError('Error de red: ' + e.message);
+      return;
+    }
+
+    if (!res.ok) {
+      const msg = data.instructions
+        ? `${data.error}\n\n${data.instructions}`
+        : (data.error || 'Error desconocido');
+      showError(msg);
+      renderJobCard({ id: null, url, status: 'error', error: data.error });
+      return;
+    }
+
+    const jobId = data.jobId;
+    renderJobCard({ id: jobId, url, status: 'pending', error: null });
+    pollJob(jobId);
+  }
+
+  function renderJobCard(job) {
+    const list = document.getElementById('job-list');
+
+    const card = document.createElement('div');
+    card.className = 'job-card';
+    card.id = job.id ? `job-${job.id}` : `job-err-${Date.now()}`;
+
+    card.innerHTML = `
+      <div class="job-header">
+        <div class="job-status-dot ${job.status}" id="dot-${job.id}"></div>
+        <span class="job-url">${escHtml(job.url)}</span>
+        <span class="job-badge badge-${job.status}" id="badge-${job.id}">${labelFor(job.status)}</span>
+      </div>
+      <div class="job-progress" id="progress-${job.id}"></div>
+      <div class="job-actions" id="actions-${job.id}"></div>
+    `;
+
+    list.prepend(card);
+
+    if (job.status === 'error') {
+      updateJobCard(job.id, { status: 'error', error: job.error, progress: '' });
+    }
+  }
+
+  function updateJobCard(jobId, data) {
+    const dot = document.getElementById(`dot-${jobId}`);
+    const badge = document.getElementById(`badge-${jobId}`);
+    const progressEl = document.getElementById(`progress-${jobId}`);
+    const actionsEl = document.getElementById(`actions-${jobId}`);
+    if (!dot) return;
+
+    dot.className = `job-status-dot ${data.status}`;
+    badge.className = `job-badge badge-${data.status}`;
+    badge.textContent = labelFor(data.status);
+
+    if (data.progress && data.status === 'downloading') {
+      progressEl.classList.add('visible');
+      progressEl.textContent = data.progress;
+    }
+
+    if (data.status === 'done') {
+      progressEl.classList.remove('visible');
+      actionsEl.innerHTML = `
+        <button class="btn-action btn-dl" onclick="downloadFile('${jobId}')">Descargar archivo</button>
+        <button class="btn-action btn-del" onclick="deleteJob('${jobId}')">Eliminar</button>
+      `;
+    }
+
+    if (data.status === 'error') {
+      progressEl.classList.add('visible');
+      progressEl.textContent = data.error || 'Error desconocido.';
+      actionsEl.innerHTML = `
+        <button class="btn-action btn-del" onclick="removeCard('${jobId}')">Descartar</button>
+      `;
+    }
+  }
+
+  function pollJob(jobId) {
+    const interval = setInterval(async () => {
+      let res, data;
+      try {
+        res = await fetch(`/api/status/${jobId}`);
+        data = await res.json();
+      } catch {
+        return;
+      }
+
+      updateJobCard(jobId, data);
+
+      if (data.status === 'done' || data.status === 'error') {
+        clearInterval(interval);
+        jobPollers.delete(jobId);
+      }
+    }, 1200);
+    jobPollers.set(jobId, interval);
+  }
+
+  function downloadFile(jobId) {
+    window.location.href = `/api/file/${jobId}`;
+  }
+
+  async function deleteJob(jobId) {
+    await fetch(`/api/cleanup/${jobId}`, { method: 'DELETE' });
+    removeCard(jobId);
+  }
+
+  function removeCard(jobId) {
+    const card = document.getElementById(`job-${jobId}`);
+    if (card) card.remove();
+    if (jobPollers.has(jobId)) {
+      clearInterval(jobPollers.get(jobId));
+      jobPollers.delete(jobId);
+    }
+    if (!document.getElementById('job-list').children.length) {
+      document.getElementById('section-title').classList.remove('visible');
+    }
+  }
+
+  function labelFor(status) {
+    return { pending: 'Pendiente', downloading: 'Descargando', done: 'Listo', error: 'Error' }[status] || status;
+  }
+
+  function escHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+</script>
+</body>
+</html>
