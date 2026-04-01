@@ -63,7 +63,6 @@ function buildArgs(url, source, outputTemplate) {
   if (source === 'tiktok') {
     return [
       ...baseArgs,
-      // Prefer the format without watermark (h264/mp4 without "watermark" in format id)
       '-f', 'bestvideo[vcodec^=h264][format_id!*=watermark]+bestaudio/bestvideo[format_id!*=watermark]+bestaudio/best[format_id!*=watermark]/best',
       '--merge-output-format', 'mp4',
       url,
@@ -75,7 +74,6 @@ function buildArgs(url, source, outputTemplate) {
       ...baseArgs,
       '-f', 'bestvideo+bestaudio/best',
       '--merge-output-format', 'mp4',
-      // Facebook sometimes needs cookies or a user-agent
       '--user-agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       url,
     ];
@@ -120,7 +118,6 @@ app.post('/api/download', (req, res) => {
   };
   jobs.set(jobId, job);
 
-  // Start download asynchronously
   const args = buildArgs(url, source, outputTemplate);
   const proc = spawn(ytDlp, args, { timeout: JOB_TIMEOUT_MS });
 
@@ -143,7 +140,6 @@ app.post('/api/download', (req, res) => {
   proc.on('close', (code) => {
     delete job.process;
     if (code === 0) {
-      // Find the downloaded file
       const files = fs.readdirSync(DOWNLOADS_DIR).filter(f => f.startsWith(jobId));
       if (files.length > 0) {
         job.filePath = path.join(DOWNLOADS_DIR, files[0]);
@@ -155,7 +151,6 @@ app.post('/api/download', (req, res) => {
       }
     } else {
       job.status = 'error';
-      // Extract a useful error message from stderr
       const errorLine = stderr.split('\n').find(l => l.includes('ERROR') || l.includes('error')) || stderr.slice(-300);
       job.error = errorLine || `El proceso terminó con código ${code}.`;
     }
@@ -167,7 +162,6 @@ app.post('/api/download', (req, res) => {
     job.error = err.message;
   });
 
-  // Auto-timeout
   setTimeout(() => {
     if (job.status === 'downloading') {
       if (job.process) job.process.kill();
@@ -203,8 +197,10 @@ app.get('/api/file/:jobId', (req, res) => {
     return res.status(404).json({ error: 'El archivo fue eliminado.' });
   }
 
-  const safeFileName = path.basename(job.fileName || 'video.mp4');
-  res.setHeader('Content-Disposition', `attachment; filename="${safeFileName}"`);
+  const rawName = path.basename(job.fileName || 'video.mp4');
+  const asciiName = rawName.replace(/[^\x20-\x7E]/g, '').replace(/["/\\]/g, '_').trim() || 'video.mp4';
+  const encodedName = encodeURIComponent(rawName);
+  res.setHeader('Content-Disposition', `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`);
   res.setHeader('Content-Type', 'video/mp4');
   res.sendFile(job.filePath);
 });
