@@ -51,7 +51,13 @@ function getYoutubeCookiesFile() {
   if (!process.env.YOUTUBE_COOKIES) return null;
   if (_cookiesFile) return _cookiesFile;
   const file = path.join(require('os').tmpdir(), 'yt-cookies.txt');
-  fs.writeFileSync(file, process.env.YOUTUBE_COOKIES, 'utf8');
+  // Soporta tanto base64 como texto plano
+  let content = process.env.YOUTUBE_COOKIES;
+  try {
+    const decoded = Buffer.from(content, 'base64').toString('utf8');
+    if (decoded.includes('youtube.com') || decoded.includes('Netscape')) content = decoded;
+  } catch {}
+  fs.writeFileSync(file, content, 'utf8');
   _cookiesFile = file;
   return file;
 }
@@ -101,18 +107,14 @@ function buildArgs(url, source, outputTemplate) {
   }
 
   if (source === 'youtube') {
-    const args = [
+    return [
       ...baseArgs,
       '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[vcodec!=none][acodec!=none][ext=mp4]/best[vcodec!=none][acodec!=none]',
       '--merge-output-format', 'mp4',
+      // Usar cliente TV/Android: no requiere cookies ni autenticación
+      '--extractor-args', 'youtube:player_client=tv_embedded,android_vr,ios',
+      url,
     ];
-    // En servidor: usar cookies desde variable de entorno YOUTUBE_COOKIES
-    const cookiesFile = getYoutubeCookiesFile();
-    if (cookiesFile) {
-      args.push('--cookies', cookiesFile);
-    }
-    args.push(url);
-    return args;
   }
 
   // Generic fallback
