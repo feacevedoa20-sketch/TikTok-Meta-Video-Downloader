@@ -6,8 +6,8 @@ const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DOWNLOADS_BASE = path.join(require('os').tmpdir(), 'video-downloader-files');
-const JOB_TIMEOUT_MS = 5 * 60 * 1000;
+const DOWNLOADS_BASE = path.join(__dirname, 'downloads');
+const JOB_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 if (!fs.existsSync(DOWNLOADS_BASE)) {
   fs.mkdirSync(DOWNLOADS_BASE, { recursive: true });
@@ -22,10 +22,12 @@ function timestampedFolder() {
   return dir;
 }
 
+// In-memory job store
 const jobs = new Map();
 
 app.use(express.json());
 
+// Optional password protection — set SITE_PASSWORD env variable to enable
 const SITE_PASSWORD = process.env.SITE_PASSWORD;
 if (SITE_PASSWORD) {
   app.use((req, res, next) => {
@@ -42,17 +44,32 @@ if (SITE_PASSWORD) {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Check if yt-dlp is installed
+// Escribe las cookies de YouTube desde la variable de entorno a un archivo temporal
+let _cookiesFile = null;
+function getYoutubeCookiesFile() {
+  if (!process.env.YOUTUBE_COOKIES) return null;
+  if (_cookiesFile) return _cookiesFile;
+  const file = path.join(require('os').tmpdir(), 'yt-cookies.txt');
+  fs.writeFileSync(file, process.env.YOUTUBE_COOKIES, 'utf8');
+  _cookiesFile = file;
+  return file;
+}
+
 function getYtDlpPath() {
   const candidates = ['yt-dlp', '/usr/local/bin/yt-dlp', '/opt/homebrew/bin/yt-dlp', '/usr/bin/yt-dlp'];
   for (const candidate of candidates) {
     try {
       execSync(`${candidate} --version`, { stdio: 'ignore' });
       return candidate;
-    } catch {}
+    } catch {
+      // not found at this path
+    }
   }
   return null;
 }
 
+// Build yt-dlp args based on source
 function buildArgs(url, source, outputTemplate) {
   const baseArgs = [
     '--no-check-certificate',
@@ -65,6 +82,7 @@ function buildArgs(url, source, outputTemplate) {
   if (source === 'tiktok') {
     return [
       ...baseArgs,
+      // Prefer the format without watermark (h264/mp4 without "watermark" in format id)
       '-f', 'bestvideo[vcodec^=h264][format_id!*=watermark]+bestaudio/bestvideo[format_id!*=watermark]+bestaudio/best[format_id!*=watermark]/best',
       '--merge-output-format', 'mp4',
       url,
@@ -83,17 +101,25 @@ function buildArgs(url, source, outputTemplate) {
   }
 
   if (source === 'youtube') {
-    return [
+    const args = [
       ...baseArgs,
       '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[vcodec!=none][acodec!=none][ext=mp4]/best[vcodec!=none][acodec!=none]',
       '--merge-output-format', 'mp4',
-      url,
     ];
+    // En servidor: usar cookies desde variable de entorno YOUTUBE_COOKIES
+    const cookiesFile = getYoutubeCookiesFile();
+    if (cookiesFile) {
+      args.push('--cookies', cookiesFile);
+    }
+    args.push(url);
+    return args;
   }
 
+  // Generic fallback
   return [...baseArgs, '-f', 'bestvideo+bestaudio/best', '--merge-output-format', 'mp4', url];
 }
 
+// POST /api/download — start a download job
 app.post('/api/download', (req, res) => {
   const { url, source } = req.body;
 
@@ -117,11 +143,20 @@ app.post('/api/download', (req, res) => {
   const outputTemplate = path.join(jobDir, '%(title).80s.%(ext)s');
 
   const job = {
-    id: jobId, url, source, status: 'pending', progress: '',
-    filePath: null, fileName: null, jobDir, error: null, createdAt: Date.now(),
+    id: jobId,
+    url,
+    source,
+    status: 'pending',
+    progress: '',
+    filePath: null,
+    fileName: null,
+    jobDir,
+    error: null,
+    createdAt: Date.now(),
   };
   jobs.set(jobId, job);
 
+  // Start download asynchronously
   const args = buildArgs(url, source, outputTemplate);
   const proc = spawn(ytDlp, args, { timeout: JOB_TIMEOUT_MS });
 
@@ -155,6 +190,7 @@ app.post('/api/download', (req, res) => {
       }
     } else {
       job.status = 'error';
+      // Extract a useful error message from stderr
       const errorLine = stderr.split('\n').find(l => l.includes('ERROR') || l.includes('error')) || stderr.slice(-300);
       job.error = errorLine || `El proceso terminó con código ${code}.`;
     }
@@ -166,6 +202,7 @@ app.post('/api/download', (req, res) => {
     job.error = err.message;
   });
 
+  // Auto-timeout
   setTimeout(() => {
     if (job.status === 'downloading') {
       if (job.process) job.process.kill();
@@ -177,12 +214,21 @@ app.post('/api/download', (req, res) => {
   res.json({ jobId });
 });
 
+// GET /api/status/:jobId — poll job status
 app.get('/api/status/:jobId', (req, res) => {
   const job = jobs.get(req.params.jobId);
   if (!job) return res.status(404).json({ error: 'Job no encontrado.' });
-  res.json({ id: job.id, status: job.status, progress: job.progress, fileName: job.fileName, error: job.error });
+
+  res.json({
+    id: job.id,
+    status: job.status,
+    progress: job.progress,
+    fileName: job.fileName,
+    error: job.error,
+  });
 });
 
+// GET /api/file/:jobId — stream file to browser
 app.get('/api/file/:jobId', (req, res) => {
   const job = jobs.get(req.params.jobId);
   if (!job || job.status !== 'done' || !job.filePath) {
@@ -191,7 +237,9 @@ app.get('/api/file/:jobId', (req, res) => {
   if (!fs.existsSync(job.filePath)) {
     return res.status(404).json({ error: 'El archivo fue eliminado.' });
   }
+
   const rawName = path.basename(job.fileName || 'video.mp4');
+  // Eliminar caracteres inválidos en headers HTTP (no-ASCII, comillas, etc.)
   const asciiName = rawName.replace(/[^\x20-\x7E]/g, '').replace(/["/\\]/g, '_').trim() || 'video.mp4';
   const encodedName = encodeURIComponent(rawName);
   res.setHeader('Content-Disposition', `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`);
@@ -199,10 +247,14 @@ app.get('/api/file/:jobId', (req, res) => {
   res.sendFile(job.filePath);
 });
 
+// DELETE /api/cleanup/:jobId — remove temp file and job
 app.delete('/api/cleanup/:jobId', (req, res) => {
   const job = jobs.get(req.params.jobId);
   if (!job) return res.status(404).json({ error: 'Job no encontrado.' });
-  if (job.filePath && fs.existsSync(job.filePath)) fs.unlinkSync(job.filePath);
+
+  if (job.filePath && fs.existsSync(job.filePath)) {
+    fs.unlinkSync(job.filePath);
+  }
   jobs.delete(req.params.jobId);
   res.json({ ok: true });
 });
@@ -212,6 +264,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  Video Downloader corriendo en http://localhost:${PORT}`);
   if (!ytDlp) {
     console.warn('\n  ADVERTENCIA: yt-dlp no encontrado.');
+    console.warn('  Instala con:  brew install yt-dlp   (macOS)');
+    console.warn('                pip install yt-dlp    (pip)\n');
   } else {
     console.log(`  yt-dlp encontrado en: ${ytDlp}\n`);
   }
