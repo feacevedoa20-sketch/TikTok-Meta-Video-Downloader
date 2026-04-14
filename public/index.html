@@ -111,7 +111,6 @@
     .btn-download:hover:not(:disabled) { background: var(--accent-hover); }
     .btn-download:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    /* Job list */
     #job-list {
       width: 100%;
       max-width: 720px;
@@ -214,7 +213,6 @@
     .btn-dl  { background: var(--success); color: #0e0e11; }
     .btn-del { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
 
-    /* Error banner */
     #error-banner {
       display: none;
       background: rgba(248,113,113,0.1);
@@ -229,7 +227,6 @@
       white-space: pre-line;
     }
 
-    /* Divider */
     .section-title {
       color: var(--muted);
       font-size: 0.78rem;
@@ -249,7 +246,7 @@
 
 <header>
   <h1>Video Downloader</h1>
-  <p>TikTok &amp; Meta Ads Library · Sin marca de agua</p>
+  <p>TikTok, Meta Ads Library  &amp; Youtube · Sin marca de agua</p>
 </header>
 
 <div class="card">
@@ -278,8 +275,22 @@
 
   function detectSource(url) {
     if (url.includes('tiktok.com')) return 'tiktok';
+    if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
     return 'meta';
   }
+
+  document.getElementById('urls').addEventListener('paste', (e) => {
+    e.preventDefault();
+    const text = e.clipboardData.getData('text');
+    const found = [...text.matchAll(/https?:\/\/[^\s,;|"'<>\[\]{}()\\]+/g)].map(m => m[0]);
+    const textarea = document.getElementById('urls');
+    const current = textarea.value.trim();
+    if (found.length > 0) {
+      textarea.value = (current ? current + '\n' : '') + found.join('\n');
+    } else {
+      textarea.value = current + (current ? '\n' : '') + text.trim();
+    }
+  });
 
   function showError(msg) {
     const el = document.getElementById('error-banner');
@@ -298,9 +309,7 @@
     document.getElementById('btn-download').disabled = true;
     document.getElementById('section-title').classList.add('visible');
 
-    for (const url of urls) {
-      await enqueueJob(url, detectSource(url));
-    }
+    await Promise.all(urls.map(url => enqueueJob(url, detectSource(url))));
 
     document.getElementById('btn-download').disabled = false;
   }
@@ -335,11 +344,9 @@
 
   function renderJobCard(job) {
     const list = document.getElementById('job-list');
-
     const card = document.createElement('div');
     card.className = 'job-card';
     card.id = job.id ? `job-${job.id}` : `job-err-${Date.now()}`;
-
     card.innerHTML = `
       <div class="job-header">
         <div class="job-status-dot ${job.status}" id="dot-${job.id}"></div>
@@ -349,9 +356,7 @@
       <div class="job-progress" id="progress-${job.id}"></div>
       <div class="job-actions" id="actions-${job.id}"></div>
     `;
-
     list.prepend(card);
-
     if (job.status === 'error') {
       updateJobCard(job.id, { status: 'error', error: job.error, progress: '' });
     }
@@ -375,8 +380,14 @@
 
     if (data.status === 'done') {
       progressEl.classList.remove('visible');
+      const a = document.createElement('a');
+      a.href = `/api/file/${jobId}`;
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
       actionsEl.innerHTML = `
-        <button class="btn-action btn-dl" onclick="downloadFile('${jobId}')">Descargar archivo</button>
+        <button class="btn-action btn-dl" onclick="downloadFile('${jobId}')">Descargar de nuevo</button>
         <button class="btn-action btn-del" onclick="deleteJob('${jobId}')">Eliminar</button>
       `;
     }
@@ -399,9 +410,7 @@
       } catch {
         return;
       }
-
       updateJobCard(jobId, data);
-
       if (data.status === 'done' || data.status === 'error') {
         clearInterval(interval);
         jobPollers.delete(jobId);
